@@ -170,33 +170,27 @@ else:
 # Main App (Only if logged in)
 if st.session_state.get("user"):  # Ensure user is logged in
     email = st.session_state["user"].email
-    st.subheader("📂 Manage Your Uploaded Resumes")
-
-    uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
+    st.sidebar.subheader("📂 Your Uploaded Resumes")
 
     # Retrieve user's uploaded files
     uploaded_files = get_uploaded_files(email)
 
     if uploaded_files:
-        selected_file = st.selectbox("Select a file to manage:", uploaded_files)
+        selected_file = st.sidebar.selectbox("Select a file:", uploaded_files)
+        file_path = f"https://your-supabase-url/storage/v1/object/public/resumes/{email}/{selected_file}"
+        #st.sidebar.markdown(f"[📥 Download {selected_file}]( {file_path} )", unsafe_allow_html=True)
 
-        col1, col2 = st.columns(2)
-
-        with col1:
-            file_path = f"https://your-supabase-url/storage/v1/object/public/resumes/{email}/{selected_file}"
-            st.markdown(f"[📥 Download {selected_file}]( {file_path} )", unsafe_allow_html=True)
-
-        with col2:
-            if st.button("🗑️ Delete File"):
-                delete_file_from_supabase(selected_file, email)
-                st.experimental_rerun()
-
+        if st.sidebar.button("🗑️ Delete File"):
+            delete_file_from_supabase(selected_file, email)
+            st.rerun()
     else:
-        st.info("You haven't uploaded any resumes yet.")
+        st.sidebar.info("No resumes uploaded yet.")
 
     # File upload handling
+    st.subheader("📤 Upload Resume")
+    uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
+    
     if uploaded_file:
-        st.subheader("📤 Upload Resume")
         file_bytes = uploaded_file.getvalue()
         file_hash = hash_file(file_bytes)
 
@@ -205,17 +199,27 @@ if st.session_state.get("user"):  # Ensure user is logged in
         else:
             if st.checkbox("Upload to Supabase"):
                 upload_file_to_supabase(uploaded_file, uploaded_file.name, email)
+                st.rerun()
 
-        # Extract text and display
-        resume_text = extract_text_from_pdf(BytesIO(file_bytes))
-        st.subheader("🔍 Extracted Resume Text")
-        st.text_area("Resume Content", resume_text, height=200)
+    # Resume analysis section
+    if uploaded_files:
+        st.subheader(f"📜 Selected Resume: {selected_file}")
 
-        job_description = st.text_area("Paste Job Description", height=200)
-        if resume_text and job_description and st.button("Analyze Resume"):
-            with st.spinner("Analyzing..."):
-                feedback = analyze_resume(resume_text, job_description)
-                st.subheader("📝 Analysis & Feedback")
-                st.write(feedback)
+        # Fetch the file from Supabase
+        response = supabase.storage.from_("resumes").download(f"resumes/{email}/{selected_file}")
+        
+        if response:
+            file_bytes = response
+            resume_text = extract_text_from_pdf(BytesIO(file_bytes))
+
+            st.subheader("🔍 Extracted Resume Text")
+            st.text_area("Resume Content", resume_text, height=200)
+
+            job_description = st.text_area("Paste Job Description", height=200)
+            if resume_text and job_description and st.button("Analyze Resume"):
+                with st.spinner("Analyzing..."):
+                    feedback = analyze_resume(resume_text, job_description)
+                    st.subheader("📝 Analysis & Feedback")
+                    st.write(feedback)
 else:
     st.warning("Please log in to upload or manage resumes.")
