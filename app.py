@@ -41,7 +41,7 @@ def analyze_resume(resume_text, job_description):
     - Suggest improvements.
     """
     
-    model = genai.GenerativeModel("gemini-pro")
+    model = genai.GenerativeModel("gemini-1.5-pro")
     response = model.generate_content(prompt)
     
     return response.text
