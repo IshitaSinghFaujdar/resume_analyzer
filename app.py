@@ -7,6 +7,7 @@ import pdfplumber
 from io import BytesIO
 from dotenv import load_dotenv
 load_dotenv()
+import io
 
 # --- Initialize Google Gemini AI ---
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -42,26 +43,68 @@ def extract_text_from_pdf(uploaded_file):
         text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
     return text
 
+
 MAX_FILE_SIZE = 10 * 1024 * 1024 
 
-def upload_file_to_supabase(file_name, file_bytes, email):
-    """Upload a file to Supabase storage and debug any errors."""
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
-
-    if len(file_bytes) > MAX_FILE_SIZE:
-        st.error(f"File is too large! ({len(file_bytes) / (1024)} KB). Max size: {MAX_FILE_SIZE / (1024)} KB")
-        return None
-
-    file_path = f"resumes/{email}/{file_name}"
+def file_exists_in_supabase(file_name, email):
     try:
-        st.write(f"Uploading {file_name} ({len(file_bytes)} bytes) to {file_path}...")
-        response = supabase.storage.from_("resumes").upload(file_path, file_bytes)
-
-        st.write(f"Upload response: {response}")  # Print API response for debugging
-        return file_path
+        response = supabase.storage.from_("resumes").list(f"resumes/{email}/")
+        existing_files = [file['name'] for file in response]
+        return file_name in existing_files
     except Exception as e:
-        st.error(f"Error uploading file: {e}")
-        return None
+        st.error(f"Error checking file existence: {e}")
+        return False
+def get_uploaded_files(email):
+    try:
+        response = supabase.storage.from_("resumes").list(f"resumes/{email}/")
+        return [file["name"] for file in response] if response else []
+    except Exception as e:
+        st.error(f"Error fetching uploaded files: {e}")
+        return []
+def delete_file_from_supabase(file_name, email):
+    try:
+        file_path = f"resumes/{email}/{file_name}"
+        supabase.storage.from_("resumes").remove([file_path])
+
+        # Remove the file hash from the database (optional)
+        supabase.table("filehashes").delete().eq("file_name", file_name).eq("email", email).execute()
+        
+        st.success(f"{file_name} deleted successfully!")
+    except Exception as e:
+        st.error(f"Error deleting {file_name}: {e}")
+
+# Function to store file hash in the database
+def store_file_hash_in_database(file_name, file_hash, email):
+    try:
+        data = {
+            "file_name": file_name,
+            "file_hash": file_hash,
+            "email": email
+        }
+        response = supabase.table("filehashes").insert(data).execute()
+        
+        st.success(f"Hash for {file_name} stored successfully in the database!")
+    except Exception as e:
+        st.error(f"Error storing hash: {e}")
+
+# Function to upload file to Supabase
+def upload_file_to_supabase(file, file_name, email):
+    try:
+        file_content = file.read()  # Read file as bytes
+        file_hash = hash_file(file_content)  # Generate hash
+
+        if file_exists_in_supabase(file_name, email):
+            st.warning(f"{file_name} already exists in Supabase. Skipping upload.")
+        else:
+            file_path = f"resumes/{email}/{file_name}"
+            response = supabase.storage.from_("resumes").upload(file_path, file_content)
+            st.success(f"{file_name} uploaded successfully!")
+
+        # Store file hash in database
+        store_file_hash_in_database(file_name, file_hash, email)
+
+    except Exception as e:
+        st.error(f"Error uploading {file_name}: {e}")
 
 
 
@@ -125,30 +168,54 @@ else:
             sign_up_user(email, password)
 
 # Main App (Only if logged in)
-if st.session_state["user"]:
+if st.session_state.get("user"):  # Ensure user is logged in
     email = st.session_state["user"].email
+    st.subheader("📂 Manage Your Uploaded Resumes")
+
     uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
-    
+
+    # Retrieve user's uploaded files
+    uploaded_files = get_uploaded_files(email)
+
+    if uploaded_files:
+        selected_file = st.selectbox("Select a file to manage:", uploaded_files)
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            file_path = f"https://your-supabase-url/storage/v1/object/public/resumes/{email}/{selected_file}"
+            st.markdown(f"[📥 Download {selected_file}]( {file_path} )", unsafe_allow_html=True)
+
+        with col2:
+            if st.button("🗑️ Delete File"):
+                delete_file_from_supabase(selected_file, email)
+                st.experimental_rerun()
+
+    else:
+        st.info("You haven't uploaded any resumes yet.")
+
+    # File upload handling
     if uploaded_file:
         st.subheader("📤 Upload Resume")
         file_bytes = uploaded_file.getvalue()
         file_hash = hash_file(file_bytes)
-        
+
         if file_hash_exists(file_hash):
             st.warning("This resume has already been uploaded.")
         else:
             if st.checkbox("Upload to Supabase"):
-                file_path = upload_file_to_supabase(uploaded_file.name, file_bytes, email)
-                supabase.table("FileHashes").insert({"email": email, "file_name": uploaded_file.name, "file_hash": file_hash}).execute()
-                st.success("Resume uploaded successfully!")
+                upload_file_to_supabase(uploaded_file, uploaded_file.name, email)
 
+        # Extract text and display
         resume_text = extract_text_from_pdf(BytesIO(file_bytes))
         st.subheader("🔍 Extracted Resume Text")
         st.text_area("Resume Content", resume_text, height=200)
-        
+
         job_description = st.text_area("Paste Job Description", height=200)
         if resume_text and job_description and st.button("Analyze Resume"):
             with st.spinner("Analyzing..."):
                 feedback = analyze_resume(resume_text, job_description)
                 st.subheader("📝 Analysis & Feedback")
                 st.write(feedback)
+else:
+    st.warning("Please log in to upload or manage resumes.")
