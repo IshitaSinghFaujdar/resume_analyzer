@@ -42,12 +42,28 @@ def extract_text_from_pdf(uploaded_file):
         text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
     return text
 
+MAX_FILE_SIZE = 10 * 1024 * 1024 
 
 def upload_file_to_supabase(file_name, file_bytes, email):
-    """Upload a file to Supabase storage."""
+    """Upload a file to Supabase storage and debug any errors."""
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        st.error(f"File is too large! ({len(file_bytes) / (1024)} KB). Max size: {MAX_FILE_SIZE / (1024)} KB")
+        return None
+
     file_path = f"resumes/{email}/{file_name}"
-    supabase.storage.from_("resumes").upload(file_path, file_bytes)
-    return file_path
+    try:
+        st.write(f"Uploading {file_name} ({len(file_bytes)} bytes) to {file_path}...")
+        response = supabase.storage.from_("resumes").upload(file_path, file_bytes)
+
+        st.write(f"Upload response: {response}")  # Print API response for debugging
+        return file_path
+    except Exception as e:
+        st.error(f"Error uploading file: {e}")
+        return None
+
+
 
 def analyze_resume(file_text, job_description):
     """Analyze resume against job description using Gemini AI."""
